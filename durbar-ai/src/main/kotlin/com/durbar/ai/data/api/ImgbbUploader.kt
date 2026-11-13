@@ -3,8 +3,13 @@ package com.durbar.ai.data.api
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.exifinterface.media.ExifInterface
 import com.durbar.ai.util.Constants
 import kotlinx.coroutines.CancellationException
@@ -117,41 +122,33 @@ object ImgbbUploader {
     }
 
     private fun prepare(context: Context, uri: Uri): ByteArray {
-        val resolver = context.contentResolver
+        var autoOriented = false
+        var source = decodeWithFactory(context, uri)
 
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw IOException("Cannot read image")
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("Cannot read image")
-
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_SIDE) sample *= 2
-
-        var bitmap: Bitmap? = null
-        while (bitmap == null && sample <= 64) {
-            try {
-                val options = BitmapFactory.Options().apply { inSampleSize = sample }
-                bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
-                    ?: throw IOException("Cannot read image")
-            } catch (e: OutOfMemoryError) {
-                sample *= 2
-            }
+        if (source == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            source = decodeWithDecoder(context, uri)
+            autoOriented = source != null
         }
-        var source = bitmap ?: throw IOException("Image too large")
 
-        val orientation = try {
-            resolver.openInputStream(uri)?.use {
-                ExifInterface(it).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL
-                )
-            } ?: ExifInterface.ORIENTATION_NORMAL
-        } catch (e: Exception) {
+        var bitmap = source ?: throw IOException("Cannot read image")
+
+        val orientation = if (autoOriented) {
             ExifInterface.ORIENTATION_NORMAL
+        } else {
+            try {
+                context.contentResolver.openInputStream(uri)?.use {
+                    ExifInterface(it).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            } catch (e: Exception) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
         }
 
         val matrix = Matrix()
-        val longest = maxOf(source.width, source.height)
+        val longest = maxOf(bitmap.width, bitmap.height)
         if (longest > MAX_SIDE) {
             val scale = MAX_SIDE.toFloat() / longest
             matrix.postScale(scale, scale)
@@ -172,20 +169,82 @@ object ImgbbUploader {
             }
         }
         if (!matrix.isIdentity) {
-            source = try {
-                Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+            bitmap = try {
+                Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
             } catch (e: OutOfMemoryError) {
                 throw IOException("Image too large")
             }
         }
 
+        if (bitmap.hasAlpha()) {
+            bitmap = flatten(bitmap)
+        }
+
         var quality = 85
-        var bytes = compress(source, quality)
+        var bytes = compress(bitmap, quality)
         while (bytes.size > MAX_BYTES && quality > 40) {
             quality -= 15
-            bytes = compress(source, quality)
+            bytes = compress(bitmap, quality)
         }
         return bytes
+    }
+
+    private fun decodeWithFactory(context: Context, uri: Uri): Bitmap? {
+        val resolver = context.contentResolver
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_SIDE) sample *= 2
+
+            var result: Bitmap? = null
+            while (result == null && sample <= 64) {
+                try {
+                    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+                    result = resolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, options)
+                    }
+                    if (result == null) return null
+                } catch (e: OutOfMemoryError) {
+                    sample *= 2
+                }
+            }
+            result
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.P)
+    private fun decodeWithDecoder(context: Context, uri: Uri): Bitmap? {
+        return try {
+            val source = ImageDecoder.createSource(context.contentResolver, uri)
+            ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val w = info.size.width
+                val h = info.size.height
+                val longest = maxOf(w, h)
+                if (longest > MAX_SIDE) {
+                    val scale = MAX_SIDE.toFloat() / longest
+                    decoder.setTargetSize(
+                        (w * scale).toInt().coerceAtLeast(1),
+                        (h * scale).toInt().coerceAtLeast(1)
+                    )
+                }
+            }
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private fun flatten(bitmap: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.WHITE)
+        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        return out
     }
 
     private fun compress(bitmap: Bitmap, quality: Int): ByteArray {
