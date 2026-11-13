@@ -55,7 +55,7 @@ afterEvaluate {
         publications {
             release(MavenPublication) {
                 from components.release
-                groupId = 'com.github.darshanghimire03lgtm'
+                groupId = 'com.github.darshanghimire03-lgtm'
                 artifactId = 'durbar-ai'
                 version = '1.0.0'
             }
