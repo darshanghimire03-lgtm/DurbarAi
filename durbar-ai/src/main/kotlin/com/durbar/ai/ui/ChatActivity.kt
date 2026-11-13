@@ -698,6 +698,7 @@ class ChatActivity : AppCompatActivity() {
 
             try {
                 if (picked.isNotEmpty()) {
+                    var uploadReason: String? = null
                     val uploaded = try {
                         coroutineScope {
                             picked.map { uri ->
@@ -707,10 +708,12 @@ class ChatActivity : AppCompatActivity() {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
+                        uploadReason = e.message
                         null
                     }
                     if (uploaded == null) {
-                        failure = UPLOAD_ERROR
+                        failure = if (uploadReason.isNullOrBlank()) UPLOAD_ERROR
+                        else "$UPLOAD_ERROR\n\n($uploadReason)"
                     } else {
                         remote = uploaded
                         userMessage.images = uploaded
