@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:app="http://schemas.android.com/apk/res-auto"
+     xmlns:tools="http://schemas.android.com/tools"
+     android:layout_height="wrap_content"
+     android:layout_width="match_parent"
+     android:layout_marginBottom="10dp"
+     android:background="@drawable/bg_ai_person_card"
+     android:elevation="1dp"
+     android:padding="16dp"
+     android:orientation="vertical">
+
+    <LinearLayout
+         android:layout_height="wrap_content"
+         android:layout_width="match_parent"
+         android:gravity="center_vertical"
+         android:orientation="horizontal">
+
+        <de.hdodenhof.circleimageview.CircleImageView
+             android:layout_height="56dp"
+             android:layout_width="56dp"
+             android:src="@drawable/ic_default_profile"
+             android:scaleType="centerCrop"
+             app:civ_border_width="2dp"
+             app:civ_border_color="#FFE8ECFA"
+             android:id="@+id/ivPersonPhoto" />
+
+        <LinearLayout
+             android:layout_height="wrap_content"
+             android:layout_width="0dp"
+             android:orientation="vertical"
+             android:layout_marginStart="14dp"
+             android:layout_weight="1">
+
+            <LinearLayout
+                 android:layout_height="wrap_content"
+                 android:layout_width="match_parent"
+                 android:gravity="center_vertical"
+                 android:orientation="horizontal">
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="wrap_content"
+                     android:ellipsize="end"
+                     android:textSize="16sp"
+                     android:textColor="@color/navy_blue"
+                     android:maxWidth="170dp"
+                     tools:text="Darshan Ghimire"
+                     android:maxLines="1"
+                     android:id="@+id/tvPersonName"
+                     android:textStyle="bold" />
+
+                <ImageView
+                     android:layout_height="16dp"
+                     android:layout_width="16dp"
+                     android:visibility="gone"
+                     android:layout_marginStart="5dp"
+                     android:id="@+id/ivPersonVerified" />
+
+            </LinearLayout>
+
+            <TextView
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 android:textSize="12sp"
+                 android:textColor="@color/satin_blue"
+                 android:paddingStart="10dp"
+                 android:layout_marginTop="5dp"
+                 tools:text="Professor"
+                 android:paddingEnd="10dp"
+                 android:background="@drawable/bg_ai_role_chip"
+                 android:paddingBottom="2dp"
+                 android:id="@+id/tvPersonRole"
+                 android:paddingTop="2dp"
+                 android:textStyle="bold" />
+
+            <TextView
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 android:ellipsize="end"
+                 android:textSize="13sp"
+                 android:textColor="#FF8A94AD"
+                 android:layout_marginTop="6dp"
+                 tools:text="Subject: Computer Science"
+                 android:maxLines="2"
+                 android:id="@+id/tvPersonSubject" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <TextView
+         android:layout_height="42dp"
+         android:layout_width="match_parent"
+         android:gravity="center"
+         android:background="@drawable/bg_ai_view_profile"
+         android:clickable="true"
+         android:textSize="14sp"
+         android:textColor="@color/satin_blue"
+         android:layout_marginTop="14dp"
+         android:focusable="true"
+         android:id="@+id/btnPersonViewProfile"
+         android:text="View profile"
+         android:textStyle="bold" />
+
+</LinearLayout>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFF</color>
+    <color name="navy_blue">#0A1A3D</color>
+    <color name="satin_blue">#1E3A8A</color>
+    <color name="brand_red">#E53935</color>
+    <color name="light_blue">#8EC5FF</color>
+    <color name="chat_text_gray">#FFA0A0A0</color>
+
+    <color name="ai_bg">#FFFDFDFF</color>
+    <color name="ai_ink">#FF0B1550</color>
+    <color name="ai_muted">#FF5C5F99</color>
+    <color name="ai_hint">#FF7E83AC</color>
+    <color name="ai_blue">#FF0B3BFF</color>
+    <color name="ai_border">#FFE4E7F5</color>
+    <color name="ai_tint">#FFEEF1FF</color>
+</resources>
