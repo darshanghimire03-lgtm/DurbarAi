@@ -5,7 +5,8 @@ data class ChatMessage(
     val isUser: Boolean,
     val isTyping: Boolean = false,
     var inHistory: Boolean = true,
-    val people: List<AiPerson> = emptyList()
+    val people: List<AiPerson> = emptyList(),
+    val status: String = ""
 )
 
 data class ChatSession(

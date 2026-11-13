@@ -3,6 +3,7 @@ package com.durbar.ai.ui
 import android.content.SharedPreferences
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
@@ -23,15 +24,16 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
 import com.durbar.ai.DurbarAi
 import com.durbar.ai.R
 import com.durbar.ai.data.api.ApiException
 import com.durbar.ai.data.api.ApiHelper
 import com.durbar.ai.data.local.UserStore
 import com.durbar.ai.data.model.AiModel
-import com.durbar.ai.data.model.AiReply
 import com.durbar.ai.data.model.ChatMessage
 import com.durbar.ai.data.model.ChatSession
+import com.durbar.ai.data.model.StreamEvent
 import com.durbar.ai.data.model.UserProfile
 import com.durbar.ai.ui.adapter.ChatAdapter
 import com.durbar.ai.ui.adapter.HistoryAdapter
@@ -54,7 +56,6 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var drawer: DrawerLayout
     private lateinit var emptyState: View
     private lateinit var tvGreeting: TextView
-    private lateinit var tvTitle: TextView
     private lateinit var tvModelChip: TextView
     private lateinit var tvHistoryEmpty: TextView
     private lateinit var inputBar: ConstraintLayout
@@ -71,6 +72,15 @@ class ChatActivity : AppCompatActivity() {
     private val collapsedSet = ConstraintSet()
     private val expandedSet = ConstraintSet()
     private var inputExpanded = false
+    private val streamBuffer = StringBuilder()
+    private var streamStatus = THINKING
+    private var lastPush = 0L
+    private var flushScheduled = false
+    private var stickToBottom = true
+    private val flushRunnable = Runnable {
+        flushScheduled = false
+        pushStream()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,7 +94,6 @@ class ChatActivity : AppCompatActivity() {
         val rvHistory = findViewById<RecyclerView>(R.id.rvAiHistory)
         emptyState = findViewById(R.id.aiEmptyState)
         tvGreeting = findViewById(R.id.tvAiGreeting)
-        tvTitle = findViewById(R.id.tvAiTitle)
         tvModelChip = findViewById(R.id.tvAiModelChip)
         tvHistoryEmpty = findViewById(R.id.tvAiHistoryEmpty)
         ivSend = findViewById(R.id.ivAiSend)
@@ -102,6 +111,16 @@ class ChatActivity : AppCompatActivity() {
         adapter = ChatAdapter()
         rvMessages.layoutManager = LinearLayoutManager(this)
         rvMessages.adapter = adapter
+        (rvMessages.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        rvMessages.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    stickToBottom = false
+                } else if (newState == RecyclerView.SCROLL_STATE_IDLE && !recyclerView.canScrollVertically(1)) {
+                    stickToBottom = true
+                }
+            }
+        })
         adapter.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
             override fun onChanged() {
                 updateEmptyState()
@@ -169,7 +188,6 @@ class ChatActivity : AppCompatActivity() {
         btnBack.setOnClickListener { finish() }
         ivSend.setOnClickListener { sendMessage() }
 
-        tvTitle.setOnClickListener { openModelSelector() }
         tvModelChip.setOnClickListener { openModelSelector() }
     }
 
@@ -178,6 +196,7 @@ class ChatActivity : AppCompatActivity() {
             window.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it)
         }
         keyboardListener = null
+        rvMessages.removeCallbacks(flushRunnable)
         super.onDestroy()
     }
 
@@ -263,7 +282,6 @@ class ChatActivity : AppCompatActivity() {
 
     private fun updateTitle() {
         val label = models.firstOrNull { it.id == selectedModelId }?.label ?: "Durbar Ai"
-        tvTitle.text = "$label ▾"
         tvModelChip.text = "$label ▾"
     }
 
@@ -424,8 +442,53 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun scrollToEnd() {
-        if (adapter.itemCount > 0) {
-            rvMessages.scrollToPosition(adapter.itemCount - 1)
+        val last = adapter.itemCount - 1
+        if (last < 0) return
+        rvMessages.scrollToPosition(last)
+        rvMessages.post { alignBottom() }
+    }
+
+    private fun alignBottom() {
+        val last = adapter.itemCount - 1
+        if (last < 0) return
+        val manager = rvMessages.layoutManager as LinearLayoutManager
+        val view = manager.findViewByPosition(last)
+        if (view == null) {
+            rvMessages.scrollToPosition(last)
+            return
+        }
+        val overflow = view.bottom - (rvMessages.height - rvMessages.paddingBottom)
+        if (overflow > 0) rvMessages.scrollBy(0, overflow)
+    }
+
+    private fun scheduleStreamPush() {
+        val wait = PUSH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastPush)
+        if (wait <= 0) {
+            rvMessages.removeCallbacks(flushRunnable)
+            flushScheduled = false
+            pushStream()
+        } else if (!flushScheduled) {
+            flushScheduled = true
+            rvMessages.postDelayed(flushRunnable, wait)
+        }
+    }
+
+    private fun pushStream() {
+        lastPush = SystemClock.uptimeMillis()
+        adapter.updateLast(streamBuffer.toString(), streamStatus)
+        if (stickToBottom) rvMessages.post { alignBottom() }
+    }
+
+    private fun cancelPendingPush() {
+        rvMessages.removeCallbacks(flushRunnable)
+        flushScheduled = false
+    }
+
+    private fun adoptModel(usedId: String?) {
+        if (usedId != null && usedId != selectedModelId && models.any { it.id == usedId }) {
+            selectedModelId = usedId
+            saveSelectedModel()
+            updateTitle()
         }
     }
 
@@ -440,43 +503,72 @@ class ChatActivity : AppCompatActivity() {
         adapter.add(userMessage)
         etQuestion.text?.clear()
         persist()
-        adapter.add(ChatMessage(text = "Thinking…", isUser = false, isTyping = true, inHistory = false))
+        adapter.add(
+            ChatMessage(
+                text = "",
+                isUser = false,
+                isTyping = true,
+                inHistory = false,
+                status = THINKING
+            )
+        )
+        streamBuffer.setLength(0)
+        streamStatus = THINKING
+        lastPush = 0L
+        stickToBottom = true
         scrollToEnd()
 
         lifecycleScope.launch {
-            var errorText: String? = null
-            val reply: AiReply? = try {
-                ApiHelper.chat(text, history, profile.takeUnless { it.isEmpty }, modelId)
+            var finished = false
+            var failure: String? = null
+
+            try {
+                ApiHelper.chatStream(text, history, profile.takeUnless { it.isEmpty }, modelId)
+                    .collect { event ->
+                        when (event) {
+                            is StreamEvent.Start -> adoptModel(event.modelId)
+                            is StreamEvent.Delta -> {
+                                streamBuffer.append(event.text)
+                                scheduleStreamPush()
+                            }
+                            is StreamEvent.Status -> {
+                                streamStatus = event.text.ifBlank { WORKING }
+                                pushStream()
+                            }
+                            is StreamEvent.Reset -> {
+                                streamBuffer.setLength(0)
+                                pushStream()
+                            }
+                            is StreamEvent.Done -> {
+                                adoptModel(event.modelId)
+                                val finalText = event.text.ifBlank { streamBuffer.toString().trim() }
+                                if (finalText.isNotBlank() || event.people.isNotEmpty()) {
+                                    cancelPendingPush()
+                                    finished = true
+                                    adapter.finishLast(finalText, event.people, true)
+                                }
+                            }
+                            is StreamEvent.Failure -> failure = event.message
+                        }
+                    }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
-                if (e.code == 429) errorText = e.message
-                null
+                if (e.code == 429) failure = e.message
             } catch (e: Exception) {
-                null
+                failure = null
             }
 
-            adapter.removeTyping()
-            if (reply != null) {
-                val usedId = reply.modelId
-                if (usedId != null && usedId != selectedModelId && models.any { it.id == usedId }) {
-                    selectedModelId = usedId
-                    saveSelectedModel()
-                    updateTitle()
-                }
-                adapter.add(ChatMessage(text = reply.text, isUser = false, people = reply.people))
-            } else {
+            cancelPendingPush()
+            if (!finished) {
                 userMessage.inHistory = false
-                adapter.add(
-                    ChatMessage(
-                        text = errorText ?: "Couldn't reach Durbar AI. Check your connection and try again.",
-                        isUser = false,
-                        inHistory = false
-                    )
-                )
+                val partial = streamBuffer.toString().trim()
+                val note = failure ?: GENERIC_ERROR
+                val body = if (partial.isEmpty()) note else "$partial\n\n_${note}_"
+                adapter.finishLast(body, emptyList(), false)
             }
             persist()
-            scrollToEnd()
+            if (stickToBottom) scrollToEnd()
             setSending(false)
         }
     }
@@ -543,5 +635,9 @@ class ChatActivity : AppCompatActivity() {
         private const val PREFS_NAME = "durbar_ai_prefs"
         private const val KEY_MODEL = "selected_model"
         private const val MODEL_SHEET_HEIGHT = 0.5f
+        private const val PUSH_INTERVAL_MS = 40L
+        private const val THINKING = "Thinking…"
+        private const val WORKING = "Working on it…"
+        private const val GENERIC_ERROR = "Couldn't reach Durbar AI. Check your connection and try again."
     }
 }

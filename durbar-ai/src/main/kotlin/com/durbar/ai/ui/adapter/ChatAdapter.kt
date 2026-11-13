@@ -1,5 +1,7 @@
 package com.durbar.ai.ui.adapter
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -11,12 +13,12 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.durbar.ai.R
 import com.durbar.ai.data.model.AiPerson
 import com.durbar.ai.data.model.ChatMessage
+import com.durbar.ai.ui.markdown.MarkdownRenderer
 import com.durbar.ai.util.Constants
 
 class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -28,8 +30,10 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     }
 
     class BotHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val status: TextView = view.findViewById(R.id.tvBotStatus)
         val message: LinearLayout = view.findViewById(R.id.messageContainer)
         val cards: LinearLayout = view.findViewById(R.id.cardsContainer)
+        var pulse: ObjectAnimator? = null
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -49,24 +53,51 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         val message = items[position]
         when (holder) {
             is UserHolder -> holder.text.text = message.text
-            is BotHolder -> {
-                holder.message.removeAllViews()
-                if (message.text.isBlank()) {
-                    holder.message.visibility = View.GONE
-                } else {
-                    holder.message.visibility = View.VISIBLE
-                    val tv = TextView(holder.message.context)
-                    tv.text = message.text
-                    tv.textSize = 16f
-                    tv.setLineSpacing(0f, 1.15f)
-                    tv.setTextColor(ContextCompat.getColor(tv.context, R.color.ai_ink))
-                    tv.setTextIsSelectable(true)
-                    holder.message.addView(tv)
-                }
-                holder.message.alpha = if (message.isTyping) 0.6f else 1f
-                bindPeople(holder.cards, message.people)
-            }
+            is BotHolder -> bindBot(holder, message)
         }
+    }
+
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        if (holder is BotHolder) stopPulse(holder)
+        super.onViewRecycled(holder)
+    }
+
+    private fun bindBot(holder: BotHolder, message: ChatMessage) {
+        val waiting = message.isTyping && message.text.isBlank()
+        if (waiting) {
+            holder.status.visibility = View.VISIBLE
+            holder.status.text = message.status.ifBlank { "Thinking…" }
+            startPulse(holder)
+        } else {
+            stopPulse(holder)
+            holder.status.visibility = View.GONE
+        }
+
+        if (message.text.isBlank()) {
+            MarkdownRenderer.render(holder.message, "")
+            holder.message.visibility = View.GONE
+        } else {
+            holder.message.visibility = View.VISIBLE
+            MarkdownRenderer.render(holder.message, message.text)
+        }
+
+        bindPeople(holder.cards, message.people)
+    }
+
+    private fun startPulse(holder: BotHolder) {
+        if (holder.pulse?.isRunning == true) return
+        holder.pulse = ObjectAnimator.ofFloat(holder.status, View.ALPHA, 1f, 0.35f).apply {
+            duration = 800
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            start()
+        }
+    }
+
+    private fun stopPulse(holder: BotHolder) {
+        holder.pulse?.cancel()
+        holder.pulse = null
+        holder.status.alpha = 1f
     }
 
     private fun bindPeople(container: LinearLayout, people: List<AiPerson>) {
@@ -165,6 +196,32 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         notifyItemInserted(items.size - 1)
     }
 
+    fun updateLast(text: String, status: String) {
+        val index = items.indexOfLast { it.isTyping }
+        if (index < 0) return
+        val current = items[index]
+        if (current.text == text && current.status == status) return
+        items[index] = current.copy(text = text, status = status)
+        notifyItemChanged(index, PAYLOAD_STREAM)
+    }
+
+    fun finishLast(text: String, people: List<AiPerson>, inHistory: Boolean) {
+        val finished = ChatMessage(
+            text = text,
+            isUser = false,
+            isTyping = false,
+            inHistory = inHistory,
+            people = people
+        )
+        val index = items.indexOfLast { it.isTyping }
+        if (index < 0) {
+            add(finished)
+            return
+        }
+        items[index] = finished
+        notifyItemChanged(index)
+    }
+
     fun removeTyping() {
         val index = items.indexOfLast { it.isTyping }
         if (index >= 0) {
@@ -196,5 +253,6 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     companion object {
         private const val TYPE_USER = 1
         private const val TYPE_BOT = 2
+        private const val PAYLOAD_STREAM = "stream"
     }
 }
