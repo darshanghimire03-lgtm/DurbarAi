@@ -18,7 +18,7 @@ dependencyResolutionManagement {
 app/build.gradle
 ```groovy
 dependencies {
-    implementation 'com.github.YOUR_GITHUB_USERNAME:DurbarAi:1.0.0'
+    implementation 'com.github.darshanghimire03-lgtm:DurbarAi:1.0.0'
 }
 ```
 
