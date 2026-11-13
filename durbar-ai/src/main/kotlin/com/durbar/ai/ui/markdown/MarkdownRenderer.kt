@@ -26,7 +26,7 @@ import kotlin.math.max
 
 object MarkdownRenderer {
 
-    private enum class Kind { TEXT, QUOTE, CODE, TABLE, RULE }
+    private enum class Kind { TEXT, QUOTE, CODE, TABLE, RULE, MATH }
 
     private class Slot(val kind: Kind) {
         var block: MdBlock? = null
@@ -106,6 +106,7 @@ object MarkdownRenderer {
         is MdBlock.Code -> Kind.CODE
         is MdBlock.Table -> Kind.TABLE
         is MdBlock.Quote -> Kind.QUOTE
+        is MdBlock.Math -> Kind.MATH
         MdBlock.Rule -> Kind.RULE
         else -> Kind.TEXT
     }
@@ -128,6 +129,7 @@ object MarkdownRenderer {
             Kind.CODE -> codeView(context)
             Kind.TABLE -> tableView(context)
             Kind.RULE -> ruleView(context)
+            Kind.MATH -> mathView(context)
         }
         view.tag = Slot(kind)
         return view
@@ -139,6 +141,7 @@ object MarkdownRenderer {
             Kind.QUOTE -> bindQuote(view as LinearLayout, block as MdBlock.Quote)
             Kind.CODE -> bindCode(view as LinearLayout, block as MdBlock.Code)
             Kind.TABLE -> bindTable(view as HorizontalScrollView, block as MdBlock.Table)
+            Kind.MATH -> bindMath(view as HorizontalScrollView, block as MdBlock.Math)
             Kind.RULE -> Unit
         }
     }
@@ -154,6 +157,31 @@ object MarkdownRenderer {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
+    }
+
+    private fun mathView(context: Context): HorizontalScrollView {
+        val scroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val tv = TextView(context).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            textSize = 19f
+            setTextColor(color(context, R.color.ai_ink))
+            setLineSpacing(0f, 1.1f)
+            setTextIsSelectable(true)
+            setPadding(dp(context, 4f), dp(context, 6f), dp(context, 4f), dp(context, 6f))
+        }
+        scroll.addView(
+            tv,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        return scroll
     }
 
     private fun quoteView(context: Context): LinearLayout {
@@ -301,6 +329,14 @@ object MarkdownRenderer {
             }
             else -> Unit
         }
+    }
+
+    private fun bindMath(scroll: HorizontalScrollView, block: MdBlock.Math) {
+        val tv = scroll.getChildAt(0) as TextView
+        tv.textSize = 19f
+        tv.setTypeface(Typeface.DEFAULT, Typeface.NORMAL)
+        tv.setText(MarkdownMath.convert(block.tex), TextView.BufferType.SPANNABLE)
+        scroll.scrollTo(0, 0)
     }
 
     private fun bindQuote(row: LinearLayout, block: MdBlock.Quote) {

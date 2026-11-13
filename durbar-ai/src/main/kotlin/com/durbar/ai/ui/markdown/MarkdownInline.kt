@@ -23,8 +23,9 @@ import com.durbar.ai.R
 object MarkdownInline {
 
     private const val FLAGS = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-    private const val ESCAPABLE = "\\`*_{}[]()#+-.!|~<>"
+    private const val ESCAPABLE = "\\`*_{}[]()#+-.!|~<>\$"
     private const val TRAILING = ".,;:!?)]}'\"*_"
+    private const val DOLLARS = "\$\$"
 
     fun style(context: Context, source: String): SpannableStringBuilder {
         val styler = Styler(
@@ -66,6 +67,13 @@ object MarkdownInline {
             var i = 0
             while (i < s.length) {
                 val c = s[i]
+                if (c == '$' || c == '\\') {
+                    val next = math(s, i)
+                    if (next > i) {
+                        i = next
+                        continue
+                    }
+                }
                 i = when {
                     c == '\\' && i + 1 < s.length && ESCAPABLE.indexOf(s[i + 1]) >= 0 -> {
                         out.append(s[i + 1])
@@ -82,6 +90,48 @@ object MarkdownInline {
                     }
                 }
             }
+        }
+
+        private fun math(s: String, i: Int): Int {
+            if (s[i] == '$') {
+                if (s.startsWith(DOLLARS, i)) {
+                    val end = s.indexOf(DOLLARS, i + 2)
+                    if (end > i + 2 && appendMath(s.substring(i + 2, end))) return end + 2
+                    return -1
+                }
+                val start = i + 1
+                if (start >= s.length || s[start].isWhitespace() || s[start] == '$') return -1
+                var j = start
+                while (j < s.length) {
+                    val k = s.indexOf('$', j)
+                    if (k < 0) return -1
+                    val before = s[k - 1]
+                    val after = if (k + 1 < s.length) s[k + 1] else ' '
+                    if (before != '\\' && !before.isWhitespace() && !after.isDigit()) {
+                        return if (appendMath(s.substring(start, k))) k + 1 else -1
+                    }
+                    j = k + 1
+                }
+                return -1
+            }
+            if (s.startsWith("\\(", i)) {
+                val end = s.indexOf("\\)", i + 2)
+                if (end > i + 2 && appendMath(s.substring(i + 2, end))) return end + 2
+                return -1
+            }
+            if (s.startsWith("\\[", i)) {
+                val end = s.indexOf("\\]", i + 2)
+                if (end > i + 2 && appendMath(s.substring(i + 2, end))) return end + 2
+                return -1
+            }
+            return -1
+        }
+
+        private fun appendMath(tex: String): Boolean {
+            val clean = tex.replace('\n', ' ').trim()
+            if (clean.isEmpty()) return false
+            out.append(MarkdownMath.convert(clean))
+            return true
         }
 
         private fun markerFor(s: String, i: Int, c: Char): String {

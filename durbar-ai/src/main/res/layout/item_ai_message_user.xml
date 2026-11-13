@@ -18,6 +18,7 @@
         android:paddingEnd="16dp"
         android:paddingBottom="11dp"
         android:textColor="@color/white"
+        android:textColorHighlight="#66FFFFFF"
         android:textIsSelectable="true"
         android:textSize="16sp" />
 

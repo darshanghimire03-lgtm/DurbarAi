@@ -6,11 +6,16 @@ sealed class MdBlock {
     data class Item(val marker: String, val ordered: Boolean, val depth: Int, val text: String) : MdBlock()
     data class Quote(val text: String) : MdBlock()
     data class Code(val lang: String, val code: String) : MdBlock()
+    data class Math(val tex: String) : MdBlock()
     data class Table(val header: List<String>, val aligns: List<Int>, val rows: List<List<String>>) : MdBlock()
     object Rule : MdBlock()
 }
 
 object MarkdownParser {
+
+    private const val DOLLARS = "\$\$"
+    private const val BRACKET_OPEN = "\\["
+    private const val BRACKET_CLOSE = "\\]"
 
     private val FENCE = Regex("(`{3,}|~{3,})\\s*([^\\s`]*).*")
     private val HEADING = Regex("(#{1,6})\\s+(.*?)(?:\\s+#+)?\\s*")
@@ -51,6 +56,10 @@ object MarkdownParser {
                 continue
             }
 
+            val continuation = paragraph.isEmpty() &&
+                blocks.lastOrNull() is MdBlock.Item &&
+                raw[0].isWhitespace()
+
             val fence = FENCE.matchEntire(line)
             if (fence != null) {
                 val marker = fence.groupValues[1]
@@ -67,6 +76,20 @@ object MarkdownParser {
                     }
                     i++
                     add(MdBlock.Code(lang, body.joinToString("\n")))
+                    continue
+                }
+            }
+
+            if (line.startsWith(DOLLARS) || line.startsWith(BRACKET_OPEN)) {
+                val math = matchMath(lines, i)
+                if (math != null) {
+                    if (continuation) {
+                        val last = blocks.removeAt(blocks.size - 1) as MdBlock.Item
+                        blocks.add(last.copy(text = last.text + "\n" + DOLLARS + math.first + DOLLARS))
+                    } else {
+                        add(MdBlock.Math(math.first))
+                    }
+                    i = math.second
                     continue
                 }
             }
@@ -143,7 +166,7 @@ object MarkdownParser {
                 continue
             }
 
-            if (paragraph.isEmpty() && blocks.lastOrNull() is MdBlock.Item && raw[0].isWhitespace()) {
+            if (continuation) {
                 val last = blocks.removeAt(blocks.size - 1) as MdBlock.Item
                 blocks.add(last.copy(text = last.text + "\n" + line))
                 i++
@@ -156,6 +179,37 @@ object MarkdownParser {
 
         flush()
         return blocks
+    }
+
+    private fun matchMath(lines: List<String>, start: Int): Pair<String, Int>? {
+        val first = lines[start].trim()
+        val open = if (first.startsWith(DOLLARS)) DOLLARS else BRACKET_OPEN
+        val close = if (open == DOLLARS) DOLLARS else BRACKET_CLOSE
+        val rest = first.substring(open.length)
+        val same = rest.indexOf(close)
+        if (same >= 0) {
+            if (rest.substring(same + close.length).isNotBlank()) return null
+            val tex = rest.substring(0, same).trim()
+            return if (tex.isEmpty()) null else Pair(tex, start + 1)
+        }
+        val body = ArrayList<String>()
+        if (rest.isNotBlank()) body.add(rest.trim())
+        var k = start + 1
+        while (k < lines.size && k <= start + 40) {
+            val t = lines[k].trim()
+            if (t.isEmpty()) return null
+            val at = t.indexOf(close)
+            if (at >= 0) {
+                if (t.substring(at + close.length).isNotBlank()) return null
+                val before = t.substring(0, at).trim()
+                if (before.isNotEmpty()) body.add(before)
+                val tex = body.joinToString(" ")
+                return if (tex.isBlank()) null else Pair(tex, k + 1)
+            }
+            body.add(t)
+            k++
+        }
+        return null
     }
 
     private fun splitRow(row: String): List<String> {

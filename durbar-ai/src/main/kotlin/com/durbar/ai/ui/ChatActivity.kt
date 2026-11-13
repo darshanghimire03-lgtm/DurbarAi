@@ -1,9 +1,12 @@
 package com.durbar.ai.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
+import android.speech.RecognizerIntent
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
@@ -15,11 +18,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.core.view.GravityCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -29,6 +34,7 @@ import com.durbar.ai.DurbarAi
 import com.durbar.ai.R
 import com.durbar.ai.data.api.ApiException
 import com.durbar.ai.data.api.ApiHelper
+import com.durbar.ai.data.local.ChatStore
 import com.durbar.ai.data.local.UserStore
 import com.durbar.ai.data.model.AiModel
 import com.durbar.ai.data.model.ChatMessage
@@ -42,6 +48,7 @@ import com.durbar.ai.util.CalendarRepository
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
@@ -53,6 +60,8 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var rvMessages: RecyclerView
     private lateinit var etQuestion: EditText
     private lateinit var ivSend: ImageView
+    private lateinit var ivMic: ImageView
+    private lateinit var ivPlus: ImageView
     private lateinit var drawer: DrawerLayout
     private lateinit var emptyState: View
     private lateinit var tvGreeting: TextView
@@ -64,6 +73,7 @@ class ChatActivity : AppCompatActivity() {
     private val sessions = mutableListOf<ChatSession>()
     private var currentSession: ChatSession? = null
     private var isSending = false
+    private var sendJob: Job? = null
     private var models: List<AiModel> = emptyList()
     private var selectedModelId: String? = null
     private var modelsLoading = false
@@ -82,26 +92,49 @@ class ChatActivity : AppCompatActivity() {
         pushStream()
     }
 
+    private val speechLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                .orEmpty()
+            if (spoken.isNotBlank()) {
+                val current = etQuestion.text.toString()
+                val joined = if (current.isBlank()) spoken else current.trimEnd() + " " + spoken
+                etQuestion.setText(joined)
+                etQuestion.setSelection(joined.length)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        theme.applyStyle(R.style.AiSelectionOverlay, true)
         setContentView(R.layout.activity_chat)
 
         drawer = findViewById(R.id.aiDrawer)
         val ivMenu = findViewById<ImageView>(R.id.ivAiMenu)
         val ivNewChat = findViewById<ImageView>(R.id.ivAiNewChat)
         val btnNewChat = findViewById<LinearLayout>(R.id.btnAiNewChat)
-        val btnBack = findViewById<LinearLayout>(R.id.btnAiBack)
         val rvHistory = findViewById<RecyclerView>(R.id.rvAiHistory)
         emptyState = findViewById(R.id.aiEmptyState)
         tvGreeting = findViewById(R.id.tvAiGreeting)
         tvModelChip = findViewById(R.id.tvAiModelChip)
         tvHistoryEmpty = findViewById(R.id.tvAiHistoryEmpty)
         ivSend = findViewById(R.id.ivAiSend)
+        ivMic = findViewById(R.id.ivAiMic)
+        ivPlus = findViewById(R.id.ivAiPlus)
         etQuestion = findViewById(R.id.etAiQuestion)
         rvMessages = findViewById(R.id.rvAiMessages)
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         selectedModelId = prefs.getString(KEY_MODEL, null)
+        sessions.addAll(ChatStore.load(this))
+        while (sessions.size > MAX_CHATS) {
+            sessions.removeAt(sessions.size - 1)
+        }
         updateTitle()
         updateGreeting()
         loadModels(false)
@@ -185,10 +218,21 @@ class ChatActivity : AppCompatActivity() {
         }
         ivNewChat.setOnClickListener { startNewChat() }
         btnNewChat.setOnClickListener { startNewChat() }
-        btnBack.setOnClickListener { finish() }
-        ivSend.setOnClickListener { sendMessage() }
 
+        ivPlus.setOnClickListener {
+            Toast.makeText(this, "Coming soon", Toast.LENGTH_SHORT).show()
+        }
+        ivMic.setOnClickListener { startVoice() }
+        ivSend.setOnClickListener {
+            when {
+                isSending -> stopGeneration()
+                etQuestion.text.isNullOrBlank() -> if (!inputExpanded) startVoice()
+                else -> sendMessage()
+            }
+        }
+        etQuestion.doAfterTextChanged { updateActionButtons() }
         tvModelChip.setOnClickListener { openModelSelector() }
+        updateActionButtons()
     }
 
     override fun onDestroy() {
@@ -198,6 +242,49 @@ class ChatActivity : AppCompatActivity() {
         keyboardListener = null
         rvMessages.removeCallbacks(flushRunnable)
         super.onDestroy()
+    }
+
+    private fun startVoice() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now")
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "Voice input isn't available on this device", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun stopGeneration() {
+        sendJob?.cancel()
+    }
+
+    private fun updateActionButtons() {
+        if (!::ivSend.isInitialized || !::ivMic.isInitialized) return
+        val empty = etQuestion.text.isNullOrBlank()
+        when {
+            isSending -> {
+                ivSend.setImageResource(R.drawable.ic_ai_stop)
+                ivSend.contentDescription = "Stop"
+                ivSend.alpha = 1f
+                ivMic.visibility = View.GONE
+            }
+            inputExpanded -> {
+                ivMic.visibility = View.VISIBLE
+                ivSend.setImageResource(R.drawable.ic_ai_send_up)
+                ivSend.contentDescription = "Send"
+                ivSend.alpha = if (empty) 0.4f else 1f
+            }
+            else -> {
+                ivMic.visibility = View.GONE
+                ivSend.setImageResource(if (empty) R.drawable.ic_ai_mic else R.drawable.ic_ai_send_up)
+                ivSend.contentDescription = if (empty) "Voice input" else "Send"
+                ivSend.alpha = 1f
+            }
+        }
     }
 
     private fun openModelSelector() {
@@ -215,11 +302,16 @@ class ChatActivity : AppCompatActivity() {
         val input = R.id.etAiQuestion
         val send = R.id.ivAiSend
         val chip = R.id.tvAiModelChip
+        val mic = R.id.ivAiMic
         val parent = ConstraintSet.PARENT_ID
         collapsedSet.setVisibility(chip, View.GONE)
+        collapsedSet.setVisibility(mic, View.GONE)
         expandedSet.setVisibility(chip, View.VISIBLE)
+        expandedSet.setVisibility(mic, View.VISIBLE)
+        expandedSet.clear(input, ConstraintSet.START)
         expandedSet.clear(input, ConstraintSet.END)
         expandedSet.clear(input, ConstraintSet.BOTTOM)
+        expandedSet.connect(input, ConstraintSet.START, parent, ConstraintSet.START, dp(14))
         expandedSet.connect(input, ConstraintSet.END, parent, ConstraintSet.END, dp(14))
         expandedSet.clear(send, ConstraintSet.TOP)
         expandedSet.clear(send, ConstraintSet.BOTTOM)
@@ -250,6 +342,7 @@ class ChatActivity : AppCompatActivity() {
         } else {
             collapsedSet.applyTo(inputBar)
         }
+        updateActionButtons()
     }
 
     private fun watchKeyboard() {
@@ -393,6 +486,7 @@ class ChatActivity : AppCompatActivity() {
         while (sessions.size > MAX_CHATS) {
             sessions.removeAt(sessions.size - 1)
         }
+        ChatStore.save(this, sessions)
         refreshHistory()
     }
 
@@ -420,6 +514,7 @@ class ChatActivity : AppCompatActivity() {
             adapter.clear()
             updateEmptyState()
         }
+        ChatStore.save(this, sessions)
         refreshHistory()
     }
 
@@ -437,8 +532,7 @@ class ChatActivity : AppCompatActivity() {
 
     private fun setSending(sending: Boolean) {
         isSending = sending
-        ivSend.isEnabled = !sending
-        ivSend.alpha = if (sending) 0.5f else 1f
+        updateActionButtons()
     }
 
     private fun scrollToEnd() {
@@ -518,8 +612,9 @@ class ChatActivity : AppCompatActivity() {
         stickToBottom = true
         scrollToEnd()
 
-        lifecycleScope.launch {
+        sendJob = lifecycleScope.launch {
             var finished = false
+            var stopped = false
             var failure: String? = null
 
             try {
@@ -552,7 +647,7 @@ class ChatActivity : AppCompatActivity() {
                         }
                     }
             } catch (e: CancellationException) {
-                throw e
+                stopped = true
             } catch (e: ApiException) {
                 if (e.code == 429) failure = e.message
             } catch (e: Exception) {
@@ -561,14 +656,24 @@ class ChatActivity : AppCompatActivity() {
 
             cancelPendingPush()
             if (!finished) {
-                userMessage.inHistory = false
                 val partial = streamBuffer.toString().trim()
-                val note = failure ?: GENERIC_ERROR
-                val body = if (partial.isEmpty()) note else "$partial\n\n_${note}_"
-                adapter.finishLast(body, emptyList(), false)
+                if (stopped) {
+                    if (partial.isEmpty()) {
+                        userMessage.inHistory = false
+                        adapter.removeTyping()
+                    } else {
+                        adapter.finishLast(partial, emptyList(), true)
+                    }
+                } else {
+                    userMessage.inHistory = false
+                    val note = failure ?: GENERIC_ERROR
+                    val body = if (partial.isEmpty()) note else "$partial\n\n_${note}_"
+                    adapter.finishLast(body, emptyList(), false)
+                }
             }
             persist()
             if (stickToBottom) scrollToEnd()
+            sendJob = null
             setSending(false)
         }
     }

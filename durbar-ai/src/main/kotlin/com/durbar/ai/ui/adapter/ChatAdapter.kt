@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -13,13 +14,16 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.durbar.ai.R
 import com.durbar.ai.data.model.AiPerson
+import com.durbar.ai.data.model.AiSource
 import com.durbar.ai.data.model.ChatMessage
 import com.durbar.ai.ui.markdown.MarkdownRenderer
 import com.durbar.ai.util.Constants
+import com.durbar.ai.util.SourceParser
 
 class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
@@ -33,6 +37,7 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         val status: TextView = view.findViewById(R.id.tvBotStatus)
         val message: LinearLayout = view.findViewById(R.id.messageContainer)
         val cards: LinearLayout = view.findViewById(R.id.cardsContainer)
+        val sources: LinearLayout = view.findViewById(R.id.sourcesContainer)
         var pulse: ObjectAnimator? = null
     }
 
@@ -82,6 +87,7 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         }
 
         bindPeople(holder.cards, message.people)
+        bindSources(holder.sources, message.sources)
     }
 
     private fun startPulse(holder: BotHolder) {
@@ -98,6 +104,55 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         holder.pulse?.cancel()
         holder.pulse = null
         holder.status.alpha = 1f
+    }
+
+    private fun bindSources(container: LinearLayout, sources: List<AiSource>) {
+        container.removeAllViews()
+        if (sources.isEmpty()) {
+            container.visibility = View.GONE
+            return
+        }
+        container.visibility = View.VISIBLE
+        val context = container.context
+        val size = dp(context, 28)
+        val gap = dp(context, 6)
+        val pad = dp(context, 4)
+
+        sources.take(MAX_SOURCES).forEach { source ->
+            val icon = ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = gap }
+                setBackgroundResource(R.drawable.bg_ai_source_icon)
+                setPadding(pad, pad, pad, pad)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                contentDescription = SourceParser.host(source.url).ifBlank { "Source" }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { openUrl(context, source.url) }
+            }
+            val favicon = SourceParser.faviconUrl(source.url)
+            if (favicon == null) {
+                icon.setImageResource(R.drawable.ic_ai_web)
+            } else {
+                Glide.with(context)
+                    .load(favicon)
+                    .placeholder(R.drawable.ic_ai_web)
+                    .error(R.drawable.ic_ai_web)
+                    .circleCrop()
+                    .dontAnimate()
+                    .into(icon)
+            }
+            container.addView(icon)
+        }
+
+        val extra = sources.size - MAX_SOURCES
+        if (extra > 0) {
+            container.addView(TextView(context).apply {
+                text = "+$extra"
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(ContextCompat.getColor(context, R.color.ai_muted))
+            })
+        }
     }
 
     private fun bindPeople(container: LinearLayout, people: List<AiPerson>) {
@@ -172,21 +227,25 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         } else {
             btnViewProfile.visibility = View.VISIBLE
             btnViewProfile.setOnClickListener {
-                openProfile(context, person.uid)
+                openUrl(context, Constants.PROFILE_BASE_URL + Uri.encode(person.uid))
             }
         }
 
         return view
     }
 
-    private fun openProfile(context: Context, uid: String) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(Constants.PROFILE_BASE_URL + Uri.encode(uid)))
+    private fun openUrl(context: Context, url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addCategory(Intent.CATEGORY_BROWSABLE)
         try {
             context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
-            Toast.makeText(context, "No app found to open this profile", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "No app found to open this link", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun dp(context: Context, value: Int): Int {
+        return (value * context.resources.displayMetrics.density).toInt()
     }
 
     override fun getItemCount(): Int = items.size
@@ -199,19 +258,22 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     fun updateLast(text: String, status: String) {
         val index = items.indexOfLast { it.isTyping }
         if (index < 0) return
+        val (body, sources) = SourceParser.split(text)
         val current = items[index]
-        if (current.text == text && current.status == status) return
-        items[index] = current.copy(text = text, status = status)
+        if (current.text == body && current.status == status && current.sources == sources) return
+        items[index] = current.copy(text = body, status = status, sources = sources)
         notifyItemChanged(index, PAYLOAD_STREAM)
     }
 
     fun finishLast(text: String, people: List<AiPerson>, inHistory: Boolean) {
+        val (body, sources) = SourceParser.split(text)
         val finished = ChatMessage(
-            text = text,
+            text = body,
             isUser = false,
             isTyping = false,
             inHistory = inHistory,
-            people = people
+            people = people,
+            sources = sources
         )
         val index = items.indexOfLast { it.isTyping }
         if (index < 0) {
@@ -254,5 +316,6 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private const val TYPE_USER = 1
         private const val TYPE_BOT = 2
         private const val PAYLOAD_STREAM = "stream"
+        private const val MAX_SOURCES = 5
     }
 }

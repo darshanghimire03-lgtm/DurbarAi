@@ -129,7 +129,7 @@
                 android:id="@+id/etAiQuestion"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
+                android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:background="@null"
                 android:gravity="center_vertical"
@@ -142,29 +142,46 @@
                 android:paddingEnd="6dp"
                 android:paddingBottom="12dp"
                 android:textColor="@color/ai_ink"
+                android:textColorHighlight="#4D0B3BFF"
                 android:textColorHint="@color/ai_hint"
                 android:textCursorDrawable="@drawable/bg_ai_cursor"
                 android:textSize="16sp"
                 android:theme="@style/AiEditTextTheme"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toStartOf="@id/ivAiSend"
-                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintStart_toEndOf="@id/ivAiPlus"
                 app:layout_constraintTop_toTopOf="parent"
                 tools:targetApi="q" />
+
+            <ImageView
+                android:id="@+id/ivAiPlus"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="Add"
+                android:focusable="true"
+                android:padding="9dp"
+                android:src="@drawable/ic_add"
+                app:layout_constraintBottom_toBottomOf="@id/ivAiSend"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="@id/ivAiSend"
+                app:tint="@color/ai_ink" />
 
             <TextView
                 android:id="@+id/tvAiModelChip"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
-                android:layout_marginStart="14dp"
-                android:layout_marginEnd="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="4dp"
                 android:background="@drawable/bg_ai_chip"
                 android:clickable="true"
                 android:ellipsize="end"
                 android:focusable="true"
                 android:gravity="center_vertical"
                 android:maxLines="1"
-                android:maxWidth="220dp"
+                android:maxWidth="170dp"
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
                 android:text="Durbar Ai ▾"
@@ -174,10 +191,27 @@
                 android:visibility="gone"
                 app:layout_constrainedWidth="true"
                 app:layout_constraintBottom_toBottomOf="@id/ivAiSend"
-                app:layout_constraintEnd_toStartOf="@id/ivAiSend"
+                app:layout_constraintEnd_toStartOf="@id/ivAiMic"
                 app:layout_constraintHorizontal_bias="0"
-                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintStart_toEndOf="@id/ivAiPlus"
                 app:layout_constraintTop_toTopOf="@id/ivAiSend" />
+
+            <ImageView
+                android:id="@+id/ivAiMic"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="2dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="Voice input"
+                android:focusable="true"
+                android:padding="9dp"
+                android:src="@drawable/ic_ai_mic"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="@id/ivAiSend"
+                app:layout_constraintEnd_toStartOf="@id/ivAiSend"
+                app:layout_constraintTop_toTopOf="@id/ivAiSend"
+                app:tint="@color/ai_ink" />
 
             <ImageView
                 android:id="@+id/ivAiSend"
@@ -188,10 +222,10 @@
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_ai_send_circle"
                 android:clickable="true"
-                android:contentDescription="Send"
+                android:contentDescription="Voice input"
                 android:focusable="true"
                 android:padding="10dp"
-                android:src="@drawable/ic_ai_send_up"
+                android:src="@drawable/ic_ai_mic"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -302,42 +336,6 @@
                 android:textSize="14sp" />
 
         </FrameLayout>
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginStart="20dp"
-            android:layout_marginEnd="20dp"
-            android:background="@color/ai_border" />
-
-        <LinearLayout
-            android:id="@+id/btnAiBack"
-            android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:background="?attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="20dp"
-            android:paddingEnd="20dp">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:importantForAccessibility="no"
-                android:src="@drawable/ic_back_arrow"
-                app:tint="@color/ai_ink" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
-                android:text="Close app"
-                android:textColor="@color/ai_ink"
-                android:textSize="15sp" />
-
-        </LinearLayout>
 
     </LinearLayout>
 
