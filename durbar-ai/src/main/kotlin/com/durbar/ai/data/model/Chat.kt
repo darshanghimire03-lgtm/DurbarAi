@@ -12,7 +12,8 @@ data class ChatMessage(
     var inHistory: Boolean = true,
     val people: List<AiPerson> = emptyList(),
     val status: String = "",
-    val sources: List<AiSource> = emptyList()
+    val sources: List<AiSource> = emptyList(),
+    var images: List<String> = emptyList()
 )
 
 data class ChatSession(

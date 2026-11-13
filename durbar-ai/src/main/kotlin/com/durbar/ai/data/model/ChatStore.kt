@@ -76,6 +76,8 @@ object ChatStore {
             m.sources.forEach { s ->
                 sources.put(JSONObject().put("url", s.url).put("title", s.title))
             }
+            val images = JSONArray()
+            m.images.filter { it.startsWith("http") }.forEach { images.put(it) }
             array.put(
                 JSONObject()
                     .put("text", m.text)
@@ -83,6 +85,7 @@ object ChatStore {
                     .put("inHistory", m.inHistory)
                     .put("people", people)
                     .put("sources", sources)
+                    .put("images", images)
             )
         }
         return array
@@ -121,13 +124,22 @@ object ChatStore {
                     if (url.isNotBlank()) sources.add(AiSource(url, s.optString("title")))
                 }
             }
+            val images = ArrayList<String>()
+            val ia = o.optJSONArray("images")
+            if (ia != null) {
+                for (j in 0 until ia.length()) {
+                    val url = ia.optString(j)
+                    if (url.startsWith("http")) images.add(url)
+                }
+            }
             list.add(
                 ChatMessage(
                     text = o.optString("text"),
                     isUser = o.optBoolean("isUser"),
                     inHistory = o.optBoolean("inHistory", true),
                     people = people,
-                    sources = sources
+                    sources = sources,
+                    images = images
                 )
             )
         }

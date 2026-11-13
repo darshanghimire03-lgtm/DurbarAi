@@ -21,6 +21,7 @@ import com.durbar.ai.R
 import com.durbar.ai.data.model.AiPerson
 import com.durbar.ai.data.model.AiSource
 import com.durbar.ai.data.model.ChatMessage
+import com.durbar.ai.ui.PhotoActivity
 import com.durbar.ai.ui.markdown.MarkdownRenderer
 import com.durbar.ai.util.Constants
 import com.durbar.ai.util.SourceParser
@@ -31,6 +32,8 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     class UserHolder(view: View) : RecyclerView.ViewHolder(view) {
         val text: TextView = view.findViewById(R.id.tvMessage)
+        val imagesScroll: View = view.findViewById(R.id.imagesScroll)
+        val images: LinearLayout = view.findViewById(R.id.imagesContainer)
     }
 
     class BotHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -38,6 +41,8 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         val message: LinearLayout = view.findViewById(R.id.messageContainer)
         val cards: LinearLayout = view.findViewById(R.id.cardsContainer)
         val sources: LinearLayout = view.findViewById(R.id.sourcesContainer)
+        val imagesScroll: View = view.findViewById(R.id.imagesScroll)
+        val images: LinearLayout = view.findViewById(R.id.imagesContainer)
         var pulse: ObjectAnimator? = null
     }
 
@@ -57,7 +62,15 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val message = items[position]
         when (holder) {
-            is UserHolder -> holder.text.text = message.text
+            is UserHolder -> {
+                if (message.text.isBlank()) {
+                    holder.text.visibility = View.GONE
+                } else {
+                    holder.text.visibility = View.VISIBLE
+                    holder.text.text = message.text
+                }
+                bindImages(holder.imagesScroll, holder.images, message.images)
+            }
             is BotHolder -> bindBot(holder, message)
         }
     }
@@ -87,7 +100,34 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         }
 
         bindPeople(holder.cards, message.people)
+        bindImages(holder.imagesScroll, holder.images, message.images)
         bindSources(holder.sources, message.sources)
+    }
+
+    private fun bindImages(scroll: View, container: LinearLayout, urls: List<String>) {
+        container.removeAllViews()
+        if (urls.isEmpty()) {
+            scroll.visibility = View.GONE
+            return
+        }
+        scroll.visibility = View.VISIBLE
+        val context = container.context
+        urls.forEachIndexed { index, url ->
+            val view = LayoutInflater.from(context).inflate(R.layout.item_img, container, false)
+            val image = view.findViewById<ImageView>(R.id.ivChatImage)
+            if (index > 0) {
+                (view.layoutParams as? LinearLayout.LayoutParams)?.marginStart = dp(context, 8)
+            }
+            Glide.with(context)
+                .load(url)
+                .centerCrop()
+                .placeholder(R.color.ai_tint)
+                .error(R.color.ai_tint)
+                .dontAnimate()
+                .into(image)
+            view.setOnClickListener { PhotoActivity.start(context, urls, index) }
+            container.addView(view)
+        }
     }
 
     private fun startPulse(holder: BotHolder) {
@@ -248,6 +288,11 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         return (value * context.resources.displayMetrics.density).toInt()
     }
 
+    private fun stripImages(text: String): String {
+        if (!text.contains("![")) return text
+        return text.replace(IMAGE_MARKDOWN, "").replace(EXTRA_BREAKS, "\n\n")
+    }
+
     override fun getItemCount(): Int = items.size
 
     fun add(message: ChatMessage) {
@@ -255,25 +300,36 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         notifyItemInserted(items.size - 1)
     }
 
+    fun refresh(message: ChatMessage) {
+        val index = items.indexOfFirst { it === message }
+        if (index >= 0) notifyItemChanged(index)
+    }
+
     fun updateLast(text: String, status: String) {
         val index = items.indexOfLast { it.isTyping }
         if (index < 0) return
-        val (body, sources) = SourceParser.split(text)
+        val (body, sources) = SourceParser.split(stripImages(text))
         val current = items[index]
         if (current.text == body && current.status == status && current.sources == sources) return
         items[index] = current.copy(text = body, status = status, sources = sources)
         notifyItemChanged(index, PAYLOAD_STREAM)
     }
 
-    fun finishLast(text: String, people: List<AiPerson>, inHistory: Boolean) {
-        val (body, sources) = SourceParser.split(text)
+    fun finishLast(
+        text: String,
+        people: List<AiPerson>,
+        inHistory: Boolean,
+        images: List<String> = emptyList()
+    ) {
+        val (body, sources) = SourceParser.split(stripImages(text))
         val finished = ChatMessage(
             text = body,
             isUser = false,
             isTyping = false,
             inHistory = inHistory,
             people = people,
-            sources = sources
+            sources = sources,
+            images = images
         )
         val index = items.indexOfLast { it.isTyping }
         if (index < 0) {
@@ -309,7 +365,7 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     }
 
     fun history(limit: Int): List<ChatMessage> {
-        return items.filter { it.inHistory && !it.isTyping }.takeLast(limit)
+        return items.filter { it.inHistory && !it.isTyping && it.text.isNotBlank() }.takeLast(limit)
     }
 
     companion object {
@@ -317,5 +373,7 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private const val TYPE_BOT = 2
         private const val PAYLOAD_STREAM = "stream"
         private const val MAX_SOURCES = 5
+        private val IMAGE_MARKDOWN = Regex("""!\[[^\]]*]\([^)]*(\)|$)""")
+        private val EXTRA_BREAKS = Regex("\n{3,}")
     }
 }

@@ -78,9 +78,10 @@ object ApiHelper {
         message: String,
         history: List<ChatMessage>,
         user: UserProfile?,
-        modelId: String?
+        modelId: String?,
+        imageUrls: List<String> = emptyList()
     ): Flow<StreamEvent> = flow {
-        val body = buildBody(message, history, user)
+        val body = buildBody(message, history, user, imageUrls)
         try {
             stream(body, modelId) { emit(it) }
         } catch (e: ApiException) {
@@ -96,9 +97,10 @@ object ApiHelper {
         message: String,
         history: List<ChatMessage>,
         user: UserProfile?,
-        modelId: String?
+        modelId: String?,
+        imageUrls: List<String> = emptyList()
     ): AiReply {
-        val body = buildBody(message, history, user)
+        val body = buildBody(message, history, user, imageUrls)
         return try {
             post(body, modelId)
         } catch (e: ApiException) {
@@ -106,7 +108,12 @@ object ApiHelper {
         }
     }
 
-    private fun buildBody(message: String, history: List<ChatMessage>, user: UserProfile?): JSONObject {
+    private fun buildBody(
+        message: String,
+        history: List<ChatMessage>,
+        user: UserProfile?,
+        imageUrls: List<String>
+    ): JSONObject {
         val historyJson = JSONArray()
         history.takeLast(HISTORY_LIMIT).forEach {
             historyJson.put(
@@ -119,6 +126,11 @@ object ApiHelper {
         val body = JSONObject()
             .put("message", message)
             .put("history", historyJson)
+
+        if (imageUrls.isNotEmpty()) {
+            body.put("image", imageUrls.first())
+            body.put("images", JSONArray(imageUrls))
+        }
 
         CalendarRepository.findToday()?.let {
             body.put(
@@ -217,7 +229,8 @@ object ApiHelper {
             "done" -> StreamEvent.Done(
                 text = json.optString("reply").trim(),
                 people = parsePeople(json.optJSONObject("cards")),
-                modelId = json.optString("model").ifBlank { null }
+                modelId = json.optString("model").ifBlank { null },
+                images = parseImages(json.optJSONArray("images"))
             )
             "error" -> StreamEvent.Failure(
                 code = json.optInt("status", 500),
@@ -241,6 +254,16 @@ object ApiHelper {
         val usedModel = json.optString("model").ifBlank { null }
         if (reply.isEmpty() && people.isEmpty()) throw IOException("Empty reply")
         return AiReply(text = reply, people = people, modelId = usedModel)
+    }
+
+    private fun parseImages(array: JSONArray?): List<String> {
+        if (array == null) return emptyList()
+        val list = ArrayList<String>()
+        for (i in 0 until array.length()) {
+            val url = array.optJSONObject(i)?.optString("url").orEmpty()
+            if (url.startsWith("http")) list.add(url)
+        }
+        return list
     }
 
     private fun parsePeople(cards: JSONObject?): List<AiPerson> {

@@ -32,6 +32,23 @@
         android:orientation="vertical"
         android:visibility="gone" />
 
+    <HorizontalScrollView
+        android:id="@+id/imagesScroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:overScrollMode="never"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/imagesContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+
+    </HorizontalScrollView>
+
     <LinearLayout
         android:id="@+id/sourcesContainer"
         android:layout_width="match_parent"

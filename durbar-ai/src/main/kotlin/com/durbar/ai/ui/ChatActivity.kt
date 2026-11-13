@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.speech.RecognizerIntent
@@ -13,6 +14,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -30,10 +32,12 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
+import com.bumptech.glide.Glide
 import com.durbar.ai.DurbarAi
 import com.durbar.ai.R
 import com.durbar.ai.data.api.ApiException
 import com.durbar.ai.data.api.ApiHelper
+import com.durbar.ai.data.api.ImgbbUploader
 import com.durbar.ai.data.local.ChatStore
 import com.durbar.ai.data.local.UserStore
 import com.durbar.ai.data.model.AiModel
@@ -45,10 +49,14 @@ import com.durbar.ai.ui.adapter.ChatAdapter
 import com.durbar.ai.ui.adapter.HistoryAdapter
 import com.durbar.ai.ui.adapter.ModelAdapter
 import com.durbar.ai.util.CalendarRepository
+import com.durbar.ai.util.Constants
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
@@ -62,6 +70,8 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var ivSend: ImageView
     private lateinit var ivMic: ImageView
     private lateinit var ivPlus: ImageView
+    private lateinit var imageScroll: HorizontalScrollView
+    private lateinit var imageStrip: LinearLayout
     private lateinit var drawer: DrawerLayout
     private lateinit var emptyState: View
     private lateinit var tvGreeting: TextView
@@ -71,6 +81,7 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private var profile = UserProfile()
     private val sessions = mutableListOf<ChatSession>()
+    private val pendingImages = mutableListOf<Uri>()
     private var currentSession: ChatSession? = null
     private var isSending = false
     private var sendJob: Job? = null
@@ -109,6 +120,12 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
+    private val imagePicker = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        addPendingImages(uris)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         theme.applyStyle(R.style.AiSelectionOverlay, true)
@@ -128,6 +145,8 @@ class ChatActivity : AppCompatActivity() {
         ivPlus = findViewById(R.id.ivAiPlus)
         etQuestion = findViewById(R.id.etAiQuestion)
         rvMessages = findViewById(R.id.rvAiMessages)
+        imageScroll = findViewById(R.id.aiImageScroll)
+        imageStrip = findViewById(R.id.aiImageStrip)
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         selectedModelId = prefs.getString(KEY_MODEL, null)
@@ -219,14 +238,12 @@ class ChatActivity : AppCompatActivity() {
         ivNewChat.setOnClickListener { startNewChat() }
         btnNewChat.setOnClickListener { startNewChat() }
 
-        ivPlus.setOnClickListener {
-            Toast.makeText(this, "Coming soon", Toast.LENGTH_SHORT).show()
-        }
+        ivPlus.setOnClickListener { openImagePicker() }
         ivMic.setOnClickListener { startVoice() }
         ivSend.setOnClickListener {
             when {
                 isSending -> stopGeneration()
-                etQuestion.text.isNullOrBlank() -> if (!inputExpanded) startVoice()
+                etQuestion.text.isNullOrBlank() && pendingImages.isEmpty() -> if (!inputExpanded) startVoice()
                 else -> sendMessage()
             }
         }
@@ -242,6 +259,66 @@ class ChatActivity : AppCompatActivity() {
         keyboardListener = null
         rvMessages.removeCallbacks(flushRunnable)
         super.onDestroy()
+    }
+
+    private fun openImagePicker() {
+        if (pendingImages.size >= Constants.MAX_INPUT_IMAGES) {
+            Toast.makeText(this, "You can add up to ${Constants.MAX_INPUT_IMAGES} photos", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            imagePicker.launch("image/*")
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "No gallery app found", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun addPendingImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        var added = 0
+        for (uri in uris) {
+            if (pendingImages.size >= Constants.MAX_INPUT_IMAGES) break
+            if (pendingImages.contains(uri)) continue
+            pendingImages.add(uri)
+            added++
+        }
+        if (added < uris.size) {
+            Toast.makeText(this, "Up to ${Constants.MAX_INPUT_IMAGES} photos per message", Toast.LENGTH_SHORT).show()
+        }
+        renderPendingImages()
+    }
+
+    private fun removePendingImage(uri: Uri) {
+        pendingImages.remove(uri)
+        renderPendingImages()
+    }
+
+    private fun renderPendingImages() {
+        imageStrip.removeAllViews()
+        pendingImages.forEach { uri ->
+            val item = layoutInflater.inflate(R.layout.item_image_input, imageStrip, false)
+            val preview = item.findViewById<ImageView>(R.id.ivInputImage)
+            Glide.with(this).load(uri).centerCrop().into(preview)
+            item.findViewById<View>(R.id.ivInputRemove).setOnClickListener { removePendingImage(uri) }
+            imageStrip.addView(item)
+        }
+        imageScroll.visibility = if (pendingImages.isEmpty()) View.GONE else View.VISIBLE
+        updateActionButtons()
+        updateListPadding()
+    }
+
+    private fun updateListPadding() {
+        if (!::inputBar.isInitialized || !::rvMessages.isInitialized) return
+        val strip = if (imageScroll.visibility == View.VISIBLE) imageScroll.height + dp(6) else 0
+        rvMessages.setPadding(
+            rvMessages.paddingLeft,
+            rvMessages.paddingTop,
+            rvMessages.paddingRight,
+            inputBar.height + strip + dp(14) + dp(16)
+        )
+        if (::adapter.isInitialized && adapter.itemCount > 0) {
+            rvMessages.post { scrollToEnd() }
+        }
     }
 
     private fun startVoice() {
@@ -264,7 +341,7 @@ class ChatActivity : AppCompatActivity() {
 
     private fun updateActionButtons() {
         if (!::ivSend.isInitialized || !::ivMic.isInitialized) return
-        val empty = etQuestion.text.isNullOrBlank()
+        val empty = etQuestion.text.isNullOrBlank() && pendingImages.isEmpty()
         when {
             isSending -> {
                 ivSend.setImageResource(R.drawable.ic_ai_stop)
@@ -319,18 +396,10 @@ class ChatActivity : AppCompatActivity() {
         expandedSet.connect(send, ConstraintSet.BOTTOM, parent, ConstraintSet.BOTTOM, dp(8))
 
         inputBar.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-            val height = bottom - top
-            if (height != oldBottom - oldTop) {
-                rvMessages.setPadding(
-                    rvMessages.paddingLeft,
-                    rvMessages.paddingTop,
-                    rvMessages.paddingRight,
-                    height + dp(14) + dp(16)
-                )
-                if (::adapter.isInitialized && adapter.itemCount > 0) {
-                    rvMessages.post { scrollToEnd() }
-                }
-            }
+            if (bottom - top != oldBottom - oldTop) updateListPadding()
+        }
+        imageScroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) updateListPadding()
         }
     }
 
@@ -471,9 +540,10 @@ class ChatActivity : AppCompatActivity() {
     private fun persist() {
         val messages = adapter.snapshot()
         val firstUser = messages.firstOrNull { it.isUser } ?: return
+        val label = firstUser.text.ifBlank { "Photo" }
         val session = currentSession ?: ChatSession(
             id = UUID.randomUUID().toString(),
-            title = if (firstUser.text.length > 40) firstUser.text.take(40) + "…" else firstUser.text,
+            title = if (label.length > 40) label.take(40) + "…" else label,
             updatedAt = System.currentTimeMillis(),
             messages = messages
         ).also {
@@ -588,26 +658,34 @@ class ChatActivity : AppCompatActivity() {
 
     private fun sendMessage() {
         val text = etQuestion.text.toString().trim()
-        if (text.isEmpty() || isSending) return
+        val picked = pendingImages.toList()
+        if ((text.isEmpty() && picked.isEmpty()) || isSending) return
 
         setSending(true)
         val history = adapter.history(12)
         val modelId = selectedModelId
-        val userMessage = ChatMessage(text = text, isUser = true)
+        val userMessage = ChatMessage(
+            text = text,
+            isUser = true,
+            images = picked.map { it.toString() }
+        )
         adapter.add(userMessage)
         etQuestion.text?.clear()
+        pendingImages.clear()
+        renderPendingImages()
         persist()
+        val firstStatus = if (picked.isEmpty()) THINKING else UPLOADING
         adapter.add(
             ChatMessage(
                 text = "",
                 isUser = false,
                 isTyping = true,
                 inHistory = false,
-                status = THINKING
+                status = firstStatus
             )
         )
         streamBuffer.setLength(0)
-        streamStatus = THINKING
+        streamStatus = firstStatus
         lastPush = 0L
         stickToBottom = true
         scrollToEnd()
@@ -616,36 +694,62 @@ class ChatActivity : AppCompatActivity() {
             var finished = false
             var stopped = false
             var failure: String? = null
+            var remote: List<String> = emptyList()
 
             try {
-                ApiHelper.chatStream(text, history, profile.takeUnless { it.isEmpty }, modelId)
-                    .collect { event ->
-                        when (event) {
-                            is StreamEvent.Start -> adoptModel(event.modelId)
-                            is StreamEvent.Delta -> {
-                                streamBuffer.append(event.text)
-                                scheduleStreamPush()
-                            }
-                            is StreamEvent.Status -> {
-                                streamStatus = event.text.ifBlank { WORKING }
-                                pushStream()
-                            }
-                            is StreamEvent.Reset -> {
-                                streamBuffer.setLength(0)
-                                pushStream()
-                            }
-                            is StreamEvent.Done -> {
-                                adoptModel(event.modelId)
-                                val finalText = event.text.ifBlank { streamBuffer.toString().trim() }
-                                if (finalText.isNotBlank() || event.people.isNotEmpty()) {
-                                    cancelPendingPush()
-                                    finished = true
-                                    adapter.finishLast(finalText, event.people, true)
-                                }
-                            }
-                            is StreamEvent.Failure -> failure = event.message
+                if (picked.isNotEmpty()) {
+                    val uploaded = try {
+                        coroutineScope {
+                            picked.map { uri ->
+                                async { ImgbbUploader.upload(applicationContext, uri) }
+                            }.awaitAll()
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
                     }
+                    if (uploaded == null) {
+                        failure = UPLOAD_ERROR
+                    } else {
+                        remote = uploaded
+                        userMessage.images = uploaded
+                        adapter.refresh(userMessage)
+                        streamStatus = THINKING
+                        pushStream()
+                    }
+                }
+
+                if (failure == null) {
+                    ApiHelper.chatStream(text, history, profile.takeUnless { it.isEmpty }, modelId, remote)
+                        .collect { event ->
+                            when (event) {
+                                is StreamEvent.Start -> adoptModel(event.modelId)
+                                is StreamEvent.Delta -> {
+                                    streamBuffer.append(event.text)
+                                    scheduleStreamPush()
+                                }
+                                is StreamEvent.Status -> {
+                                    streamStatus = event.text.ifBlank { WORKING }
+                                    pushStream()
+                                }
+                                is StreamEvent.Reset -> {
+                                    streamBuffer.setLength(0)
+                                    pushStream()
+                                }
+                                is StreamEvent.Done -> {
+                                    adoptModel(event.modelId)
+                                    val finalText = event.text.ifBlank { streamBuffer.toString().trim() }
+                                    if (finalText.isNotBlank() || event.people.isNotEmpty() || event.images.isNotEmpty()) {
+                                        cancelPendingPush()
+                                        finished = true
+                                        adapter.finishLast(finalText, event.people, true, event.images)
+                                    }
+                                }
+                                is StreamEvent.Failure -> failure = event.message
+                            }
+                        }
+                }
             } catch (e: CancellationException) {
                 stopped = true
             } catch (e: ApiException) {
@@ -742,7 +846,9 @@ class ChatActivity : AppCompatActivity() {
         private const val MODEL_SHEET_HEIGHT = 0.5f
         private const val PUSH_INTERVAL_MS = 40L
         private const val THINKING = "Thinking…"
+        private const val UPLOADING = "Uploading photos…"
         private const val WORKING = "Working on it…"
         private const val GENERIC_ERROR = "Couldn't reach Durbar AI. Check your connection and try again."
+        private const val UPLOAD_ERROR = "Couldn't upload the photo. Check your connection and try again."
     }
 }
